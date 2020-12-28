@@ -18,25 +18,37 @@ public class UpdateAction {
     // the attributes of the tuple to be inserted
     public Object tupleData;
 
-    public Integer orderpriority=1234;
+    public String orderpriority = "1234";
     public Long orderkey;
 
 
     public UpdateAction() {
     }
 
-    public UpdateAction(String actionFlag, String relationName, Long primaryKey, Object tupleData,Long orderkey) {
+    public UpdateAction(String actionFlag, String relationName, Long primaryKey, Object tupleData, Long orderkey) {
         this.actionFlag = actionFlag;
         this.relationName = relationName;
         this.primaryKey = primaryKey;
         this.tupleData = tupleData;
         this.orderkey = orderkey;
+    }
 
+    public void setOrderpriority(String orderpriority) {
+        this.orderpriority = orderpriority;
+    }
+
+    public String getSomeKey(){
+        return this.orderpriority;
     }
 
 //    public void setOrderpriority(S orderpriority) {
 //        this.orderpriority = orderpriority;
 //    }
+
+
+    public Long getOrderkey() {
+        return orderkey;
+    }
 
     public String getActionFlag() {
         return actionFlag;
@@ -85,14 +97,9 @@ public class UpdateAction {
                 "actionFlag='" + actionFlag + '\'' +
                 ", orderkey='" + orderkey + '\'' +
                 ", relationName='" + relationName + '\'' +
-                ", order_priority='" + orderpriority + '\'' +
                 ", tupleData=" + tupleData +
+                ", priority=" + orderpriority +
                 '}';
     }
 
-    @Override
-    public int hashCode() {
-//        return super.hashCode();
-        return (int) (primaryKey*10);
-    }
 }

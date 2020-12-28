@@ -1,5 +1,7 @@
 package Q4;
+import org.apache.flink.api.common.functions.JoinFunction;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.streaming.api.datastream.KeyedStream;
 import table.*;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.state.ValueState;
@@ -12,6 +14,8 @@ import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 import util.TPCHDataSources;
 import relations.*;
+import org.apache.flink.streaming.api.windowing.assigners.EventTimeSessionWindows;
+import org.apache.flink.streaming.api.windowing.time.Time;
 
 import java.util.Hashtable;
 
@@ -53,18 +57,17 @@ public class query4 {
         final StreamExecutionEnvironment sEnv = StreamExecutionEnvironment.getExecutionEnvironment();
         DataStream<LineitemTuple> lineitem = TPCHDataSources.getLineitemTupleDataStream(sEnv);
         DataStream<OrdersTuple> orders = TPCHDataSources.getOrdersTupleDataStream(sEnv);
-        Hashtable<Long, String> join_result = new Hashtable<>();
-
+//        insert
         DataStream<UpdateAction> q4UpdateSeq1 = orders.map(
                 new MapFunction<OrdersTuple, UpdateAction>() {
                     @Override
                     public UpdateAction map(OrdersTuple ordersTuple) throws Exception {
-                        join_result.put(new Long(ordersTuple.o_orderkey),new String(ordersTuple.o_orderpriority));
                         UpdateAction orderaction = new UpdateAction("insert",
                                 "orders",
                                 ordersTuple.o_orderkey,
                                 (Object) ordersTuple,
                                 ordersTuple.o_orderkey);
+//                        orderaction.setOrderpriority(ordersTuple.o_orderpriority);
                         return orderaction;
                     }
                 }
@@ -83,9 +86,62 @@ public class query4 {
                 }
         );
 
-        DataStream<UpdateAction> q4UpdateSeq = q4UpdateSeq1.union(q4UpdateSeq2);
-        q4UpdateSeq.print();
-//        q4UpdateSeq.keyBy("orderpriority").process(new Q4AjuAlgo()).print();
+
+//        delete
+        DataStream<UpdateAction> q4UpdateSeq3 = orders.map(
+                new MapFunction<OrdersTuple, UpdateAction>() {
+                    @Override
+                    public UpdateAction map(OrdersTuple ordersTuple) throws Exception {
+                        UpdateAction orderaction = new UpdateAction("delete",
+                                "orders",
+                                ordersTuple.o_orderkey,
+                                (Object) ordersTuple,
+                                ordersTuple.o_orderkey);
+//                        orderaction.setOrderpriority(ordersTuple.o_orderpriority);
+                        return orderaction;
+                    }
+                }
+        );
+        DataStream<UpdateAction> q4UpdateSeq4 = lineitem.map(
+                new MapFunction<LineitemTuple, UpdateAction>() {
+                    @Override
+                    public UpdateAction map(LineitemTuple lineitemTuple) throws Exception {
+                        UpdateAction lineitemaction =  new UpdateAction("delete",
+                                "lineitem",
+                                lineitemTuple.get_primaryKey(),
+                                (Object) lineitemTuple,
+                                lineitemTuple.l_orderkey);
+                        return lineitemaction;
+                    }
+                }
+        );
+//        DataStream<UpdateAction> q4UpdateSeq3 = q4UpdateSeq2.join(q4UpdateSeq1).where(value -> value.getOrderkey()).equalTo(value -> value.getOrderkey()).window(EventTimeSessionWindows.withGap(Time.seconds(5)))
+//                .apply(new JoinFunction<UpdateAction, UpdateAction, UpdateAction>() {
+//                    @Override
+//                    public UpdateAction join(UpdateAction lineitem, UpdateAction order) {
+//                        UpdateAction lineitemaction =  new UpdateAction("insert",
+//                                "lineitem",
+//                                lineitem.primaryKey,
+//                                lineitem.tupleData,
+//                                lineitem.orderkey);
+//                        lineitemaction.setOrderpriority(order.orderpriority);
+//                        return lineitemaction;
+//                    }
+//                });
+//        q4UpdateSeq3.print();
+//        q4UpdateSeq3.print();
+        DataStream<UpdateAction> q4UpdateSeq_insert = q4UpdateSeq1.union(q4UpdateSeq2);
+        DataStream<UpdateAction> q4UpdateSeq_delete = q4UpdateSeq3.union(q4UpdateSeq4);
+
+        DataStream<UpdateAction> q4UpdateSeq_final= q4UpdateSeq_insert.union(q4UpdateSeq_delete);
+//        q4UpdateSeq.print();
+        KeyedStream<UpdateAction,String> insert_stream = q4UpdateSeq_insert.keyBy(value -> value.getSomeKey());
+        KeyedStream<UpdateAction,String> delete_stream = q4UpdateSeq_delete.keyBy(value -> value.getSomeKey());
+        q4UpdateSeq_final.keyBy(value -> value.getSomeKey()).process(new Q4AjuAlgo()).print();
+//        delete_stream.print();
+//        insert_stream.process(new Q4AjuAlgo()).print();
+//        delete_stream.process(new Q4AjuAlgo()).print();
+
 //        q4UpdateSeq.keyBy(new KeySelector<UpdateAction, Integer>() {
 //            @Override
 //            public Integer getKey(UpdateAction value){
@@ -98,7 +154,7 @@ public class query4 {
     }
 
 
-    public static class Q4AjuAlgo extends KeyedProcessFunction<Tuple, UpdateAction, Q4SelectResultTuple> {
+    public static class Q4AjuAlgo extends KeyedProcessFunction<String, UpdateAction, Q4SelectResultTuple> {
 
         private ValueState<Q4Result> resultState;
         private ValueState<RelationsManager> relationState;
@@ -120,7 +176,6 @@ public class query4 {
             // init the result state
             Q4Result curResult = resultState.value();
             if (curResult == null) {
-                System.out.println("new state");
                 curResult = new Q4Result();
             }
 
@@ -140,7 +195,7 @@ public class query4 {
 
             if (updateAction.actionFlag.compareTo("insert") == 0) {
                 curRelationUnit.tuplesIndex.put(updateAction.getPrimaryKey(),updateAction.tupleData);
-                System.out.println(curRelationUnit.getRelationName()+curRelationUnit.tuplesIndex.size());
+//                System.out.println(curRelationUnit.getRelationName()+curRelationUnit.tuplesIndex.size());
                 // insert algo
                 if (!curRelationUnit.isLeaf) {
                     // s <- 0
@@ -221,6 +276,9 @@ public class query4 {
                                 if(t_O.getO_orderdate().compareTo("1993-07-01") >= 0 && t_O.getO_orderdate().compareTo("1993-10-01") < 0){
                                     tmpResultTuple.o_orderpriority = t_O.getO_orderpriority();
                                     tmpResultTuple.order_count = 1;
+                                    if(tmpResultTuple.o_orderpriority != null && tmpResultTuple.o_orderpriority.length() != 0){
+                                        tmpResultTuple.resultMap.put(tmpResultTuple.o_orderpriority,tmpResultTuple.order_count);
+                                    }
                                     curResult.addTuple(tmpResultTuple);
                                 }
                             }
@@ -233,18 +291,22 @@ public class query4 {
                                 OrdersTuple t_O = (OrdersTuple) tc;
                                 if (t_O.getO_orderdate().compareTo("1993-07-01") >= 0 && t_O.getO_orderdate().compareTo("1993-10-01") < 0) {
                                     Q4SelectResultTuple lastResultTuple = curResult.result.get(curResult.result.size() - 1);
+
                                     tmpResultTuple.o_orderpriority = t_O.getO_orderpriority();
-                                    tmpResultTuple.order_count = lastResultTuple.order_count + 1;
+                                    if(lastResultTuple.resultMap.containsKey(t_O.getO_orderpriority()))
+                                        tmpResultTuple.order_count = lastResultTuple.resultMap.get(t_O.getO_orderpriority()) + 1;
+                                    else
+                                        tmpResultTuple.order_count = 1;
+                                    if(tmpResultTuple.o_orderpriority != null)
+                                        tmpResultTuple.resultMap.put(tmpResultTuple.o_orderpriority,tmpResultTuple.order_count);
                                     curResult.addTuple(tmpResultTuple);
                                 }
                             }
                         }
-                        resultState.update(curResult);
-                        relationState.update(curRelationsManager);
                         collector.collect(tmpResultTuple);
                     }
                     else {
-                        System.out.println(curRelationUnit.parentRelation.tuplesIndex.size());
+//                        System.out.println(curRelationUnit.parentRelation.tuplesIndex.size());
                         for (Object value : curRelationUnit.parentRelation.tuplesIndex.values()) {
                             LineitemTuple t_L = (LineitemTuple)value;
                             long PK4lineitem = t_L.get_primaryKey();
@@ -264,6 +326,8 @@ public class query4 {
                                             if(t_O.getO_orderdate().compareTo("1993-07-01") >= 0 && t_O.getO_orderdate().compareTo("1993-10-01") < 0){
                                                 tmpResultTuple.o_orderpriority = t_O.getO_orderpriority();
                                                 tmpResultTuple.order_count = 1;
+                                                if(tmpResultTuple.o_orderpriority != null)
+                                                    tmpResultTuple.resultMap.put(tmpResultTuple.o_orderpriority,tmpResultTuple.order_count);
                                                 curResult.addTuple(tmpResultTuple);
                                             }
                                         }
@@ -277,28 +341,112 @@ public class query4 {
                                             if (t_O.getO_orderdate().compareTo("1993-07-01") >= 0 && t_O.getO_orderdate().compareTo("1993-10-01") < 0) {
                                                 Q4SelectResultTuple lastResultTuple = curResult.result.get(curResult.result.size() - 1);
                                                 tmpResultTuple.o_orderpriority = t_O.getO_orderpriority();
-                                                tmpResultTuple.order_count = lastResultTuple.order_count + 1;
+                                                if(lastResultTuple.resultMap.containsKey(t_O.getO_orderpriority()))
+                                                    tmpResultTuple.order_count = lastResultTuple.resultMap.get(t_O.getO_orderpriority()) + 1;
+                                                else
+                                                    tmpResultTuple.order_count = 1;
+                                                if(tmpResultTuple.o_orderpriority != null)
+                                                    tmpResultTuple.resultMap.put(tmpResultTuple.o_orderpriority,tmpResultTuple.order_count);
                                                 curResult.addTuple(tmpResultTuple);
                                             }
                                         }
                                     }
-                                    resultState.update(curResult);
-                                    relationState.update(curRelationsManager);
                                     collector.collect(tmpResultTuple);
 
                                 }
                             }
                         }
                     }
+                    resultState.update(curResult);
+                    relationState.update(curRelationsManager);
 
                 }
                 else{
                     //I(N(R))←I(N(R))+(πPK(R)t →t)
                     curRelationUnit.nonliveTuplesIndex.put(updateAction.primaryKey,updateAction.tupleData);
+                    resultState.update(curResult);
+                    relationState.update(curRelationsManager);
                 }
 
             } else if (updateAction.actionFlag.compareTo("delete") == 0) {
+//                System.out.println("delete");
                 // delete algo
+                curRelationUnit.tuplesIndex.remove(updateAction.getPrimaryKey());
+
+                if(curRelationUnit.liveTuplesIndex.containsKey(updateAction.getPrimaryKey())) {
+                    curRelationUnit.liveTuplesIndex.remove(updateAction.getPrimaryKey());
+
+                    if (curRelationUnit.isRoot()) {
+
+
+                        Object t = updateAction.tupleData;
+                        LineitemTuple t_L = (LineitemTuple) t;
+
+                        Q4SelectResultTuple tmpResultTuple = new Q4SelectResultTuple();
+                        if (t_L.getL_commitdate().compareTo(t_L.getL_receiptdate()) < 0) {
+                            //get orders
+                            Object tc = curRelationUnit.childRelations.get(0).tuplesIndex.get(updateAction.getPrimaryKeyOfRc(0));
+                            OrdersTuple t_O = (OrdersTuple) tc;
+                            if (t_O.getO_orderdate().compareTo("1993-07-01") >= 0 && t_O.getO_orderdate().compareTo("1993-10-01") < 0) {
+                                Q4SelectResultTuple lastResultTuple = curResult.result.get(curResult.result.size() - 1);
+
+                                tmpResultTuple.o_orderpriority = t_O.getO_orderpriority();
+                                if (lastResultTuple.resultMap.containsKey(t_O.getO_orderpriority()))
+                                    tmpResultTuple.order_count = lastResultTuple.resultMap.get(t_O.getO_orderpriority()) - 1;
+                                else
+                                    tmpResultTuple.order_count = 0;
+                                if (tmpResultTuple.o_orderpriority != null)
+                                    tmpResultTuple.resultMap.put(tmpResultTuple.o_orderpriority, tmpResultTuple.order_count);
+                                curResult.addTuple(tmpResultTuple);
+                            }
+                        }
+                        collector.collect(tmpResultTuple);
+                    } else {
+
+                        for (Object value : curRelationUnit.parentRelation.tuplesIndex.values()) {
+                            LineitemTuple t_L = (LineitemTuple) value;
+                            long PK4lineitem = t_L.get_primaryKey();
+                            if (t_L.getL_orderkey() == updateAction.getPrimaryKey()) {
+                                int tmp = curRelationUnit.parentRelation.s_counter.get(PK4lineitem);
+                                curRelationUnit.parentRelation.s_counter.put(PK4lineitem, tmp - 1);
+                                if(tmp - 1 != curRelationUnit.parentRelation.getChildRelationsNum()){
+                                    curRelationUnit.parentRelation.liveTuplesIndex.remove(PK4lineitem);
+                                    curRelationUnit.parentRelation.nonliveTuplesIndex.put(PK4lineitem,value);
+
+                                    Q4SelectResultTuple tmpResultTuple = new Q4SelectResultTuple();
+                                    if(t_L.getL_commitdate().compareTo(t_L.getL_receiptdate()) < 0) {
+                                        //get orders
+                                        Object tc = curRelationUnit.tuplesIndex.get(t_L.getL_orderkey());
+                                        OrdersTuple t_O = (OrdersTuple) tc;
+                                        if (t_O.getO_orderdate().compareTo("1993-07-01") >= 0 && t_O.getO_orderdate().compareTo("1993-10-01") < 0) {
+                                            Q4SelectResultTuple lastResultTuple = curResult.result.get(curResult.result.size() - 1);
+                                            tmpResultTuple.o_orderpriority = t_O.getO_orderpriority();
+                                            if(lastResultTuple.resultMap.containsKey(t_O.getO_orderpriority()))
+                                                tmpResultTuple.order_count = lastResultTuple.resultMap.get(t_O.getO_orderpriority()) - 1;
+                                            else
+                                                tmpResultTuple.order_count = 0;
+                                            if(tmpResultTuple.o_orderpriority != null)
+                                                tmpResultTuple.resultMap.put(tmpResultTuple.o_orderpriority,tmpResultTuple.order_count);
+                                            curResult.addTuple(tmpResultTuple);
+                                        }
+                                    }
+
+                                    collector.collect(tmpResultTuple);
+                                }
+                            }
+
+                        }
+                    }
+                }
+                else{
+                    curRelationUnit.nonliveTuplesIndex.remove(updateAction.getPrimaryKey());
+                }
+                if(!curRelationUnit.isRoot()){
+                    curRelationUnit.getParentRelation().indexOfRandRc.remove(updateAction.getPrimaryKey());
+                }
+                resultState.update(curResult);
+                relationState.update(curRelationsManager);
+
             }
             else {
                 throw new RuntimeException("update flag does not exist!");

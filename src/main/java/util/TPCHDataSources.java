@@ -37,9 +37,9 @@ public class TPCHDataSources {
 
     public static final String commonDataFilePath = "/Users/zhaozhongyu/Desktop/MSBD5014/2.18.0_rc2/ref_data/1/";
     public static final String customerFilePath = commonDataFilePath + "customer.tbl";
-    public static final String lineitemFilePath = commonDataFilePath + "lineitem.tbl.u1.43";
+    public static final String lineitemFilePath = commonDataFilePath + "lineitem.tbl.u1.30";
     public static final String nationFilePath = commonDataFilePath + "nation.tbl";
-    public static final String ordersFilePath = commonDataFilePath + "orders.tbl.u1.43";
+    public static final String ordersFilePath = commonDataFilePath + "orders.tbl.u1.30";
     public static final String partFilePath = commonDataFilePath + "part.tbl";
     public static final String partsuppFilePath = commonDataFilePath + "partsupp.tbl";
     public static final String regionFilePath = commonDataFilePath + "region.tbl";
